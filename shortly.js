@@ -6,6 +6,7 @@ var session = require('express-session');
 var passport = require('passport');
 var LocalStrategy = require('passport-local');
 var bcrypt = require('bcrypt-nodejs');
+var cookieParser = require('cookie-parser');
 
 var db = require('./app/config');
 var Users = require('./app/collections/users');
@@ -25,21 +26,41 @@ app.use(bodyParser.json());
 // Parse forms (signup/login)
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(__dirname + '/public'));
+app.use(passport.initialize());
+app.use(passport.session());
+app.use(cookieParser());
 
 passport.use(new LocalStrategy(
   {
     usernameField: 'username',
-    passwordField: 'saltedHash',
-    session: false
+    passwordField: 'password',
+    session: true
   },
   function(username, password, cb) {
-    db.users.findByUsername(username, function(err, user) {
+    util.findByUsername(username, function(err, user) {
+      console.log(user);
       if (err) { return cb(err); }
       if (!user) { return cb(null, false); }
-      if (user.password != password) { return cb(null, false); }
+      if (!bcrypt.compareSync(password, user.saltedHash)) { return cb(null, false); }
       return cb(null, user);
     });
-  }));
+  })
+);
+
+passport.serializeUser(function(user, cb) {
+  console.log(user);
+  console.log('serailize');
+  cb(null, user.id);
+});
+
+passport.deserializeUser(function(id, cb) {
+  util.findById(id, function (err, user) {
+    console.log(user);
+    console.log('deserailize');
+    if (err) { return cb(err); }
+    cb(null, user);
+  });
+});
 
 app.get('/', 
 function(req, res) {
@@ -75,10 +96,10 @@ function(req, res) {
   }
   else {
     Links.reset().fetch().then(function(links) {
-      util.findByUsername(username, function(user_id){
+      util.findByUsername(username, function(err, user){
         var results = [];
         links.forEach(function(link){
-          if (link.attributes.user_id === user_id){
+          if (link.attributes.user_id === user.id){
             results.push(link);
           }
         });
@@ -118,11 +139,11 @@ function(req, res) {
           console.log('Error reading URL heading: ', err);
           return res.send(404);
         }
-        util.findByUsername(username, function(user_id){
+        util.findByUsername(username, function(err, user){
           var link = new Link({
             url: uri,
             title: title,
-            user_id: user_id,
+            user_id: user.id,
             base_url: req.headers.origin
           });
           link.save().then(function(newLink) {
@@ -136,7 +157,7 @@ function(req, res) {
 });
 
 app.post('/signup', 
-function(req, res) {
+  function(req, res) {
   var username = req.body.username;
   var password = req.body.password;
 
@@ -155,32 +176,38 @@ function(req, res) {
             res.redirect('/');
           }
         });
-      } 
-    });
-});
-
-app.post('/login', 
-function(req, res) {
-  var username = req.body.username;
-  var password = req.body.password;
-
-  db.knex('users')
-    .where('username', '=', username)
-    .then(function(result){
-      if (!result[0] || !result[0]['username']) {
-        console.log('username does not exist');
-        res.redirect('/login');
-      } else if (bcrypt.compareSync(password, result[0]['saltedHash'])){
-        console.log('username exists, password matched');
-        req.session.regenerate(function(){
-          req.session.username = username;
-          res.redirect('/');
-        });
-      } else {
-        res.redirect('/login');
       }
     });
-});
+  });
+
+app.post('/login', 
+  passport.authenticate('local', { failureRedirect: '/login' }),
+  function(req, res) {
+    res.redirect('/');
+  });
+
+// app.post('/login', 
+// function(req, res) {
+//   var username = req.body.username;
+//   var password = req.body.password;
+
+//   db.knex('users')
+//     .where('username', '=', username)
+//     .then(function(result){
+//       if (!result[0] || !result[0]['username']) {
+//         console.log('username does not exist');
+//         res.redirect('/login');
+//       } else if (bcrypt.compareSync(password, result[0]['saltedHash'])){
+//         console.log('username exists, password matched');
+//         req.session.regenerate(function(){
+//           req.session.username = username;
+//           res.redirect('/');
+//         });
+//       } else {
+//         res.redirect('/login');
+//       }
+//     });
+// });
 
 /************************************************************/
 // Handle the wildcard route last - if all other routes fail
